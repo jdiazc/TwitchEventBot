@@ -105,6 +105,26 @@ async def convert_image_to_data_uri(url):
             print(f"An unexpected error occurred while fetching image: {e}")
             return None
 
+# Función para verificar el estado actual del evento en Discord
+async def check_discord_event_status(guild_id, event_id):
+    url = f'https://discord.com/api/v9/guilds/{guild_id}/scheduled-events/{event_id}'
+    headers = {
+        'Authorization': f'Bot {TOKEN}',
+    }
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    event_data = await response.json()
+                    # Verifica si el evento aún está activo (por ejemplo, no ha sido cancelado manualmente)
+                    return event_data['status'] in [1, 2]  # 1 para SCHEDULED, 2 para ACTIVE
+                else:
+                    return False
+        except Exception as e:
+            print(f"An unexpected error occurred while checking Discord event status: {e}")
+            return False
+
 # Función para comprobar si el canal de Twitch está en directo
 async def check_twitch_stream_online():
     global twitch_oauth_token
@@ -244,10 +264,18 @@ async def check_twitch_and_create_event():
     global is_event_active, discord_event_id
     stream_online, stream_title = await check_twitch_stream_online()
     
+    # Verifica primero el estado del evento en Discord si existe uno
+    if discord_event_id:
+        is_event_still_active = await check_discord_event_status(GUILD_ID, discord_event_id)
+        if not is_event_still_active:
+            is_event_active = False
+            discord_event_id = None
+
     if stream_online:
         if not is_event_active:
             # El canal está en directo y no se ha creado un evento aún
             event_name = f"{TWITCH_CHANNEL_NAME} está en directo!"
+
             # Crea el evento
             is_event_created = await create_discord_event(GUILD_ID, event_name, stream_title, "https://media.discordapp.net/attachments/794644359064453122/1171932649955270726/1024.png")
             is_event_active = is_event_created
@@ -258,6 +286,7 @@ async def check_twitch_and_create_event():
             changes = {'status': 3}  # COMPLETED
             was_event_cancelled = await modify_discord_event(GUILD_ID, discord_event_id, changes)
             if was_event_cancelled:
+                print(f"Evento '{discord_event_id}' eliminado con éxito.")
                 discord_event_id = None  # Restablece el ID del evento
                 is_event_active = False  # Indica que ya no hay un evento activo
 
